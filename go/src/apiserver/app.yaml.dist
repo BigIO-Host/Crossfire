@@ -1,0 +1,37 @@
+runtime: go
+service: default
+env: flex
+threadsafe: true
+manual_scaling:
+  instances: 1  
+#automatic_scaling:
+#  min_num_instances: 1
+#  max_num_instances: 2
+
+#[START env_variables]
+env_variables:
+  GCLOUD_PROJECT_NAME: $GAE_PROJECT_ID
+  PUBSUB_TOPIC: $EVENT_PUBSUB_TOPIC
+  DATASTORE_TABLE_PREFIX: $DATASTORE_TABLE_PREFIX
+  DATASTORE_NAMESPACE: $DATASTORE_NAMESPACE
+  REDIS_SERVER: $CACHE_REDIS_SERVER:6379
+  REDIS_PASSWD: $CACHE_REDIS_PASSWD
+  SESSION_REDIS_SERVER: $SESSION_REDIS_SERVER:6379
+  SESSION_REDIS_PASSWD: $SESSION_REDIS_PASSWD
+  DATASTORE_PROJECTS_TABLE: $DATASTORE_PROJECTS_TABLE
+  DATASTORE_PROJECTKEYS_TABLE: $DATASTORE_PROJECTKEYS_TABLE
+  CONTEXT_CACHE_TTL: 10
+  CACHE_TTL: 60
+  ENABLE_DEBUG: $DEBUG
+#[END env_variables]
+
+# for old GAE-GO
+#api_version: go1
+#handlers:
+#- url: /.*
+#  script: _go_app
+
+handlers:
+- url: /.*
+  script: IGNORED
+  secure: always
