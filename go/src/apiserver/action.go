@@ -167,7 +167,6 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 	var actResults = make([]actionResult, 0)
 
 	truePosterior, predStatus, predError := mutantClassify(projectID, goal, states, startDate, endDate)
-
 	bigioDebugf(c, "CLASSIFY truePosterior=%f", truePosterior)
 
 	var expectedRewards = make([]float64, len(req.Actions)) //this for active learning
@@ -175,74 +174,69 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 	var actionsStringArray = make([]string, len(req.Actions))
 	var actPredictStatus = make([]bool, len(req.Actions))
 
+	var pickedByActive string
+	var pickedIndex int
+	var pickedMode string
+	//var probArray []float64
+
+	var res *actionResponse
+
 	for i, action := range req.Actions {
 		actionsStringArray[i] = action.Name
+		actPredictStatus[i] = false
+	}
 
-		if truePosterior > 0 {
+	//if truePosterior > 0 {
+	if predStatus == 0 && truePosterior > 0 {
+		//for each action we need to consider
+		for i, action := range req.Actions {
 			bigioDebugf(c, "Query Action=%s", action)
 			lift := 0.0
 			gain := 0.0
+
 			atruePosterior, status, errorMsg := mutantActionify(projectID, action.Name, goal, states, startDate, endDate)
 			//log.Debugf(c, "ACTIONIFY atruePosterior=%f", atruePosterior)
-			if atruePosterior != -1 {
+			if status == 0 {
 				lift = (atruePosterior - truePosterior) / truePosterior * 100         //show lift in percentage
 				gain = atruePosterior*(reward-action.Cost) - (truePosterior * reward) //show gain in expected value minus cost_of_action
 				expectedRewards[i] = atruePosterior * (reward - action.Cost)          //for active learning
 				baselineReward = truePosterior * reward
 				actPredictStatus[i] = true
-			} else {
-				actPredictStatus[i] = false
 			}
 
-			//append enture struct instead of pointer reference
-			actResults = append(actResults, actionResult{
+			actR := actionResult{
 				Goal:        goal,
 				Action:      action.Name,
 				Probability: truePosterior,
 				ActTrue:     atruePosterior,
 				Lift:        lift,
 				Gain:        gain,
-				Error:       bigioError{Code: status, Message: errorMsg}})
+				Error:       bigioError{Code: status, Message: errorMsg}}
 
-		} else {
-			//fix me, do we need need to anything?
+			//append enture struct instead of pointer reference
+			actResults = append(actResults, actR)
 		}
-	}
 
-	//Active Learning
-	bigioDebugf(c, "expectedRewards: %v", expectedRewards)
-	var pickedByActive string
-	var pickedIndex int
-	var pickedMode string
-	//var probArray []float64
+		//Active Learning
+		bigioDebugf(c, "expectedRewards: %v", expectedRewards)
+		pickedIndex, pickedMode = activeLearning(req.Explore, actPredictStatus, expectedRewards, baselineReward, gainonly)
+		if pickedIndex > 0 {
+			pickedByActive = actionsStringArray[pickedIndex]
+		} else {
+			pickedByActive = "no-action"
+		}
 
-	pickedIndex, pickedMode = activeLearning(req.Explore, actPredictStatus, expectedRewards, baselineReward, gainonly)
-	if pickedIndex > 0 {
-		pickedByActive = actionsStringArray[pickedIndex]
-	} else {
-		pickedByActive = "no-action"
-	}
-
-	var res *actionResponse
-
-	if predStatus == 0 {
+		var actResultsPointer = make([]actionResult, 0)
 		if req.Detail == true {
-			res = &actionResponse{
-				Results:  actResults,
-				Goal:     goal,
-				Decision: pickedByActive,
-				Mode:     pickedMode,
-			}
-		} else {
-			//var actResultsEmpty []ActionResult
-			var actResultsEmpty = make([]actionResult, 0)
-			res = &actionResponse{
-				Results:  actResultsEmpty,
-				Goal:     goal,
-				Decision: pickedByActive,
-				Mode:     pickedMode,
-			}
+			actResultsPointer = actResults
 		}
+		res = &actionResponse{
+			Results:  actResultsPointer,
+			Goal:     goal,
+			Decision: pickedByActive,
+			Mode:     pickedMode,
+		}
+
 	} else {
 		//when there is no goal event found, we always explore (learn)
 		pickedIndex, _ = alwaysExploreAL(actPredictStatus, expectedRewards, baselineReward, gainonly)
@@ -256,10 +250,10 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 			Mode:     "learn-goal",
 			Error:    bigioError{Code: predStatus, Message: predError},
 		}
-
 	}
 
 	returnBody, _ := json.Marshal(res)
+
 	if len(anchorid) > 0 {
 		anchorKey := fmt.Sprintf("pact:%s:%s:%s", projectID, sessionID, anchorid)
 		cacheSet30mins(anchorKey, string(returnBody))
@@ -272,7 +266,6 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 		evt.Timestamp = time.Now().UnixNano() / 1000000
 
 		evt.SsnConf = gorillacontext.Get(r, "ssnConf").(string)
-		//evt.EventName = pickedByActive + "#ACT" //Suffix
 		evt.EventName = pickedByActive
 		evt.EventType = "ACT"
 		evt.Label = label
