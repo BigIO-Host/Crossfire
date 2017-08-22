@@ -27,6 +27,7 @@ import (
 	"net/http"
 	_ "regexp"
 	_ "strings"
+	"sync"
 	"time"
 )
 
@@ -43,7 +44,7 @@ type actionRequest struct {
 	Reward           float64  `json:"reward"`
 	AnchorID         string   `json:"anchorid"`
 	GainOnly         bool     `json:"gainonly"`
-	Explore          int64    `json:"explore"` // FIXME: hidden feature in API DOC
+	Explore          string   `json:"explore"` // FIXME: hidden feature in API DOC
 	MuteActionRecord bool     `json:"mute"`
 	CtxLength        int64    `json:"ctxlength"`
 	Label            string   `json:"label"` // FIXME: hidden feature: new Tag to match goal label and event label
@@ -138,7 +139,6 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 			//set the cache expire for another 30 mins.
 			cacheSetExpire30mins(anchorKey)
 			//return prevResult and 200
-			//w.Write([]byte(prevResult))
 			return []byte(prevResult)
 		}
 	}
@@ -164,13 +164,13 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 	}
 
 	var truePosterior float64
-	var actResults = make([]actionResult, 0)
 
 	truePosterior, predStatus, predError := mutantClassify(projectID, goal, states, startDate, endDate)
 	bigioDebugf(c, "CLASSIFY truePosterior=%f", truePosterior)
 
-	var expectedRewards = make([]float64, len(req.Actions)) //this for active learning
 	var baselineReward = 0.0
+	var expectedRewards = make([]float64, len(req.Actions)) //this for active learning
+	var actResults = make([]actionResult, len(req.Actions))
 	var actionsStringArray = make([]string, len(req.Actions))
 	var actPredictStatus = make([]bool, len(req.Actions))
 
@@ -186,41 +186,45 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 		actPredictStatus[i] = false
 	}
 
-	//if truePosterior > 0 {
 	if predStatus == 0 && truePosterior > 0 {
+		var waitgrp sync.WaitGroup
+		waitgrp.Add(len(req.Actions))
 		//for each action we need to consider
-		for i, action := range req.Actions {
-			bigioDebugf(c, "Query Action=%s", action)
-			lift := 0.0
-			gain := 0.0
+		for i, act := range req.Actions {
+			bigioDebugf(c, "Query Action=%s Cost=%f i=%d", act.Name, act.Cost, i)
+			//goroutine closure
+			go func(i int, act action) {
+				defer waitgrp.Done()
+				lift := 0.0
+				gain := 0.0
+				atruePosterior, status, errorMsg := mutantActionify(projectID, act.Name, goal, states, startDate, endDate)
 
-			atruePosterior, status, errorMsg := mutantActionify(projectID, action.Name, goal, states, startDate, endDate)
-			//log.Debugf(c, "ACTIONIFY atruePosterior=%f", atruePosterior)
-			if status == 0 {
-				lift = (atruePosterior - truePosterior) / truePosterior * 100         //show lift in percentage
-				gain = atruePosterior*(reward-action.Cost) - (truePosterior * reward) //show gain in expected value minus cost_of_action
-				expectedRewards[i] = atruePosterior * (reward - action.Cost)          //for active learning
-				baselineReward = truePosterior * reward
-				actPredictStatus[i] = true
-			}
+				if status == 0 {
+					actPredictStatus[i] = true
+					lift = (atruePosterior - truePosterior) / truePosterior * 100      //show lift in percentage
+					gain = atruePosterior*(reward-act.Cost) - (truePosterior * reward) //show gain in expected value minus cost_of_action
+					baselineReward = truePosterior * reward
+					expectedRewards[i] = atruePosterior * (reward - act.Cost) //for active learning
+				}
 
-			actR := actionResult{
-				Goal:        goal,
-				Action:      action.Name,
-				Probability: truePosterior,
-				ActTrue:     atruePosterior,
-				Lift:        lift,
-				Gain:        gain,
-				Error:       bigioError{Code: status, Message: errorMsg}}
+				actResults[i] = actionResult{
+					Goal:        goal,
+					Action:      act.Name,
+					Probability: truePosterior,
+					ActTrue:     atruePosterior,
+					Lift:        lift,
+					Gain:        gain,
+					Error:       bigioError{Code: status, Message: errorMsg}}
 
-			//append enture struct instead of pointer reference
-			actResults = append(actResults, actR)
+			}(i, act)
 		}
+		// wait for goroutines to finish
+		waitgrp.Wait()
 
 		//Active Learning
 		bigioDebugf(c, "expectedRewards: %v", expectedRewards)
 		pickedIndex, pickedMode = activeLearning(req.Explore, actPredictStatus, expectedRewards, baselineReward, gainonly)
-		if pickedIndex > 0 {
+		if pickedIndex >= 0 {
 			pickedByActive = actionsStringArray[pickedIndex]
 		} else {
 			pickedByActive = "no-action"
@@ -239,7 +243,7 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 
 	} else {
 		//when there is no goal event found, we always explore (learn)
-		pickedIndex, _ = alwaysExploreAL(actPredictStatus, expectedRewards, baselineReward, gainonly)
+		pickedIndex, _ = alwaysExplorePolicy(actPredictStatus, expectedRewards, baselineReward, gainonly)
 		pickedByActive = actionsStringArray[pickedIndex]
 
 		bigioDebugf(c, "alwaysExplore predStatus=0")
