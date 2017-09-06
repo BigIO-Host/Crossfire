@@ -15,11 +15,11 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/mux"
-	"golang.org/x/net/context"
 	"io"
 	"io/ioutil"
 	"net/http"

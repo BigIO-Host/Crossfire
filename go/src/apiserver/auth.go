@@ -16,10 +16,9 @@ package main
 
 import (
 	"cloud.google.com/go/datastore"
+	"context"
 	"fmt"
-	gorillacontext "github.com/gorilla/context"
 	"github.com/gorilla/mux"
-	"golang.org/x/net/context"
 	"time"
 
 	"encoding/json"
@@ -72,14 +71,14 @@ func authHandler(pass handler, perm string) handler {
 			}
 		}
 
-		//gorillacontext.Set(r, "windowSize", int64(windowsize))
-		gorillacontext.Set(r, "ssnConf", sessionConf)
-
 		// they are not related to auth, anyway
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
-		pass(w, r)
+		r2 := r.WithContext(context.WithValue(r.Context(), "ssnConf", sessionConf))
+
+		pass(w, r2)
+		return
 	}
 }
 

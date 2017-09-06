@@ -20,7 +20,7 @@ import (
 	"math"
 	"time"
 
-	"golang.org/x/net/context"
+	"context"
 )
 
 // this matches datastore column name
