@@ -15,12 +15,11 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	gorillacontext "github.com/gorilla/context"
 	"github.com/gorilla/mux"
-	"golang.org/x/net/context"
 	"io"
 	"io/ioutil"
 	_ "log"
@@ -271,7 +270,7 @@ func actionHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) []
 		evt.ID = sessionID
 		evt.Timestamp = time.Now().UnixNano() / 1000000
 
-		evt.SsnConf = gorillacontext.Get(r, "ssnConf").(string)
+		evt.SsnConf = r.Context().Value("ssnConf").(string)
 		//evt.EventName = pickedByActive + "#ACT" //Suffix
 		evt.EventName = pickedByActive
 		evt.EventType = "ACT"

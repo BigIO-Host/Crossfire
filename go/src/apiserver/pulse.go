@@ -26,8 +26,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	gorillacontext "github.com/gorilla/context"
-	"golang.org/x/net/context"
+	"context"
 
 	s "strings"
 )
@@ -113,7 +112,7 @@ func pulseHandlerCommon(w http.ResponseWriter, r *http.Request, body []byte) int
 	evt.ID = sessionID
 	evt.Timestamp = timestamp
 
-	evt.SsnConf = gorillacontext.Get(r, "ssnConf").(string)
+	evt.SsnConf = r.Context().Value("ssnConf").(string)
 
 	/* multiple event */
 	//for each event in events
