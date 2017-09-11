@@ -17,10 +17,11 @@ package main
 import (
 	"math"
 	"math/rand"
+	"strings"
 )
 
 //Simplest epsilonGreedy
-func epsilonGreedyAL(status []bool, values []float64, baselineReward float64, gainonly bool, eps float64) (int, string) {
+func epsilonGreedyPolicy(status []bool, values []float64, baselineValue float64, gainonly bool, eps float64) (int, string) {
 	if rand.Float64() < eps {
 		i := rand.Intn(len(status))
 		return i, "explore"
@@ -35,8 +36,8 @@ func epsilonGreedyAL(status []bool, values []float64, baselineReward float64, ga
 	}
 	for i := 0; i < actCnt; i++ {
 		if values[i] == maxValue {
-			if gainonly == true && values[i] > baselineReward {
-				//if gainonly and no gain in expected reward. we return no-action
+			if gainonly == true && values[i] > baselineValue {
+				//if gainonly and no gain in expected reward. we return suppress
 				return -1, "suppress"
 			}
 
@@ -48,17 +49,17 @@ func epsilonGreedyAL(status []bool, values []float64, baselineReward float64, ga
 }
 
 //foreverGreedy (100% active learning)
-func alwaysExploreAL(status []bool, values []float64, baselineReward float64, gainonly bool) (int, string) {
-	return epsilonGreedyAL(status, values, baselineReward, gainonly, 1.0)
+func alwaysExplorePolicy(status []bool, values []float64, baselineValue float64, gainonly bool) (int, string) {
+	return epsilonGreedyPolicy(status, values, baselineValue, gainonly, 1.0)
 }
 
 //foreverGreedy (no active learning)
-func alwaysGreedyAL(status []bool, values []float64, baselineReward float64, gainonly bool) (int, string) {
-	return epsilonGreedyAL(status, values, baselineReward, gainonly, 0.0)
+func alwaysGreedyPolicy(status []bool, values []float64, baselineValue float64, gainonly bool) (int, string) {
+	return epsilonGreedyPolicy(status, values, baselineValue, gainonly, 0.0)
 }
 
 //Enhanced epsilonGreedy, agreesive learning for new actions (actions without information)
-func curiousEpsilonGreedyAL(status []bool, values []float64, baselineReward float64, gainonly bool, eps float64) (int, string) {
+func curiousEpsilonGreedyPolicy(status []bool, values []float64, baselineValue float64, gainonly bool, eps float64) (int, string) {
 	newCnt := 0
 	newEps := 0.0
 	//var newActions = make([]string, len(values))
@@ -78,17 +79,14 @@ func curiousEpsilonGreedyAL(status []bool, values []float64, baselineReward floa
 		return i, "learn-action"
 	}
 
-	return epsilonGreedyAL(status, values, baselineReward, gainonly, eps)
+	return epsilonGreedyPolicy(status, values, baselineValue, gainonly, eps)
 
 }
 
-//FIXME: Softmax does not support gainonly!
 //Softmax
-func softmaxAL(status []bool, values []float64, baselineReward float64, gainonly bool, temperature float64) (int, string, []float64) {
-	//logic in python
-	//z = sum([math.exp(v / temperature) for v in values])
-	//probs = [math.exp(v / temperature) / z for v in values]
-	//pick action based on probs
+//FIXME: Softmax does not support gainonly!
+func softmaxPolicy(status []bool, values []float64, baselineValue float64, gainonly bool, temperature float64) (int, string, []float64) {
+	//pick action based on expected reward distribution
 	actCnt := len(status)
 	sum := 0.0
 	var expValues = make([]float64, len(status))
@@ -117,7 +115,7 @@ func softmaxAL(status []bool, values []float64, baselineReward float64, gainonly
 }
 
 //curiosSoftmax
-func curiousSoftmaxAL(status []bool, values []float64, baselineReward float64, gainonly bool, temperature float64) (int, string, []float64) {
+func curiousSoftmaxPolicy(status []bool, values []float64, baselineValue float64, gainonly bool, temperature float64) (int, string, []float64) {
 	//find max value in values, replace the status failure with maxValue.
 	//then new action will have same probability as the current best action.
 	maxValue := 0.0
@@ -132,36 +130,26 @@ func curiousSoftmaxAL(status []bool, values []float64, baselineReward float64, g
 			values[i] = maxValue
 		}
 	}
-	return softmaxAL(status, values, baselineReward, gainonly, temperature)
+	return softmaxPolicy(status, values, baselineValue, gainonly, temperature)
 }
 
-func activeLearning(Explore int64, status []bool, values []float64, baselineReward float64, gainonly bool) (int, string) {
-	switch Explore {
-	case 0:
-		return curiousEpsilonGreedyAL(status, values, baselineReward, gainonly, 0.05)
-		//bigioDebugf(c, "newEpsilonGreedy: %f default", 0.05)
-	case 1:
-		return alwaysExploreAL(status, values, baselineReward, gainonly)
-		//bigioDebugf(c, "alwaysExplore")
-	case 2:
-		return alwaysGreedyAL(status, values, baselineReward, gainonly)
-		//bigioDebugf(c, "alwaysGreedy")
-	case 4:
-		return epsilonGreedyAL(status, values, baselineReward, gainonly, 0.05)
-		//bigioDebugf(c, "epsilonGreedy: %f", 0.05)
-	case 8:
-		pickedIndex, pickedMode, _ := softmaxAL(status, values, baselineReward, gainonly, 0.1)
+func activeLearning(exploreMode string, status []bool, values []float64, baselineValue float64, gainonly bool) (int, string) {
+	switch strings.ToUpper(exploreMode) {
+	case "E":
+		return alwaysExplorePolicy(status, values, baselineValue, gainonly)
+	case "G":
+		return alwaysGreedyPolicy(status, values, baselineValue, gainonly)
+	case "EG":
+		return epsilonGreedyPolicy(status, values, baselineValue, gainonly, 0.05)
+	case "S":
+		pickedIndex, pickedMode, _ := softmaxPolicy(status, values, baselineValue, gainonly, 0.1)
 		return pickedIndex, pickedMode
-		//bigioDebugf(c, "softmax: %v", probArray)
-	case 16:
-		return curiousEpsilonGreedyAL(status, values, baselineReward, gainonly, 0.05)
-		//bigioDebugf(c, "curiousEpsilonGreedy: %f", 0.05)
-	case 32:
-		pickedIndex, pickedMode, _ := curiousSoftmaxAL(status, values, baselineReward, gainonly, 0.1)
+	case "CEG":
+		return curiousEpsilonGreedyPolicy(status, values, baselineValue, gainonly, 0.05)
+	case "CS":
+		pickedIndex, pickedMode, _ := curiousSoftmaxPolicy(status, values, baselineValue, gainonly, 0.1)
 		return pickedIndex, pickedMode
-		//bigioDebugf(c, "curiousSoftmax: %v", probArray)
 	default:
-		return epsilonGreedyAL(status, values, baselineReward, gainonly, 0.05)
-		//bigioDebugf(c, "epsilonGreedy: %f", 0.05)
+		return epsilonGreedyPolicy(status, values, baselineValue, gainonly, 0.05)
 	}
 }
